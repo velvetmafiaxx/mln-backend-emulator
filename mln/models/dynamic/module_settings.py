@@ -149,3 +149,10 @@ class ModuleSetupTrioPerformance(models.Model):
 			friends.add(user_id)
 		if len(friends) != 2:
 			raise ValidationError("Duplicate friends specified")
+
+class ModuleSetupCode(models.Model):
+	"""Save data for the code module, which allows users to enter a code to receive an item."""
+	module = models.ForeignKey(Module, related_name="setup_codemodule", on_delete=models.CASCADE)
+	code = models.CharField(max_length=64, unique=True)  # Unique code for the module
+	item = models.ForeignKey(ItemInfo, related_name="+", on_delete=models.CASCADE, limit_choices_to={"type": ItemType.ITEM})  # Item given when the code is entered
+	quantity = models.PositiveSmallIntegerField(default=1)  # Quantity of the item given when the code is entered

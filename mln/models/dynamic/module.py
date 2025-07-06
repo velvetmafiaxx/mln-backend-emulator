@@ -12,7 +12,7 @@ from datetime import timedelta
 from .dynamic import DAY, get_or_none
 from .dynamic import FriendshipStatus
 from ..static import ItemInfo, ItemType, MessageTemplate, ModuleEditorType, ModuleHarvestYield, ModuleInfo, ModuleOutcome, ModuleSetupCost, Stack
-from ..static.module_handlers import CLICK_HANDLERS
+from ..static.module_handlers import CLICK_HANDLERS, ModuleGuestYield
 
 from ...services.inventory import add_inv_item, assert_has_item, remove_inv_item
 from ...services.friend import choose_friend
@@ -129,6 +129,17 @@ class Module(models.Model):
 			add_inv_item(self.owner, trade.request_item.id, trade.request_qty)
 			add_inv_item(clicker, trade.give_item.id, trade.give_qty)
 
+		# Code Module
+		if ModuleSetupCode in self.get_settings_classes():
+			codemodule = self.setup_codemodule.first()
+			entered_code = module_settings_classes[ModuleEditorType.CODE_MODULE][0].get_code_from_click(clicker)
+			if not codemodule or not codemodule.code.strip():
+				return None
+			# Compare user's entered code to the setup code
+			if codemodule.code.strip().lower() != entered_code.strip().lower():
+				return None  # entered code doesn't match
+			add_inv_item(clicker, codemodule.item.id, codemodule.quantity)
+
 		# Handle guest yields separately
 		outcome = self.item.module_info.click_outcome
 		result = None  # we return the guest yield to the UI
@@ -220,7 +231,7 @@ class Module(models.Model):
 		self.is_setup = False
 		self.save()
 
-from .module_settings import ModuleSaveGeneric, ModuleSaveNetworkerPic, ModuleSaveNetworkerText, ModuleSaveRocketGame, ModuleSaveSoundtrack, ModuleSaveSticker, ModuleSaveUGC, ModuleSetupFriendShare, ModuleSetupGroupPerformance, ModuleSetupTrade, ModuleSetupTrioPerformance
+from .module_settings import ModuleSaveGeneric, ModuleSaveNetworkerPic, ModuleSaveNetworkerText, ModuleSaveRocketGame, ModuleSaveSoundtrack, ModuleSaveSticker, ModuleSaveUGC, ModuleSetupCode, ModuleSetupFriendShare, ModuleSetupGroupPerformance, ModuleSetupTrade, ModuleSetupTrioPerformance
 from .module_settings_arcade import ModuleSaveConcertArcade, ModuleSaveDeliveryArcade, ModuleSaveDestructoidArcade, ModuleSaveHopArcade
 
 """Settings class registry. This links module editor types to settings classes."""
@@ -250,5 +261,6 @@ module_settings_classes = {
 	ModuleEditorType.STICKER_SHOPPE: (ModuleSaveGeneric, ModuleSetupTrade),
 	ModuleEditorType.TRADE: (ModuleSaveGeneric, ModuleSetupTrade),
 	ModuleEditorType.TRIO_PERFORMANCE: (ModuleSaveGeneric, ModuleSetupTrioPerformance),
+	ModuleEditorType.CODE_MODULE: (ModuleSetupCode,),
 	None: (),
 }

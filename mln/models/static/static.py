@@ -241,6 +241,7 @@ class ModuleEditorType(Enum):
 	TRADE = auto()
 	TRIO_PERFORMANCE = auto()
 	NETWORKER_PIC = auto()
+	CODE_MODULE = auto()
 
 class ModuleOutcome(Enum): 
 	"""When to distribute items. Used in module click handlers, like ModuleOwnerYield."""
@@ -248,6 +249,7 @@ class ModuleOutcome(Enum):
 	BATTLE = auto()  # after winning a battle  [eg, bee battle]
 	NUM_CLICKS = auto()  # after a number of clicks [eg, Stardust Sticker]
 	PROBABILITY = auto()  # can be 100% for a guarantee [eg, Wind Mill]
+	CODE = auto()  # after entering a code in the code module
 
 class ModuleHarvestYield(models.Model):
 	"""Defines the item the module "grows", its harvest cap, its growth rate, and the click growth rate."""
