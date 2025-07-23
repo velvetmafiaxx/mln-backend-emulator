@@ -12,7 +12,7 @@ from django.core.validators import MaxValueValidator
 from django.db import models
 from django.utils.timezone import now
 
-from ..static import Answer, Color, EnumField, ItemInfo, ItemType, MessageBody, Stack, Question
+from ..static import Answer, Color, EnumField, ItemInfo, ItemType, MessageBody, Stack, Question, MessageTemplate
 from ...services.inventory import assert_has_item
 
 DAY = datetime.timedelta(days=1)
@@ -56,6 +56,7 @@ class Profile(models.Model):
 	user = models.OneToOneField(User, on_delete=models.CASCADE)
 	is_networker = models.BooleanField(default=False)
 	is_secret = models.BooleanField(default=False, help_text="If true, this user is a secret networker and should not be displayed in public friend lists.")
+	is_pseudo = models.BooleanField(default=False)
 	avatar = models.CharField(max_length=64, default="0#1,6,1,16,5,1,6,13,2,9,2,2,1,1")
 	rank = models.PositiveSmallIntegerField(default=0)
 	available_votes = models.PositiveSmallIntegerField(default=20)
@@ -146,6 +147,7 @@ class FriendshipStatus(Enum):
 	FRIEND = auto()
 	PENDING = auto()
 	BLOCKED = auto()
+	REMOVED = auto()  # not a real status, do not save with this. For runtime only
 
 class Friendship(models.Model):
 	"""
@@ -159,9 +161,72 @@ class Friendship(models.Model):
 	def __str__(self):
 		return "%s -> %s: %s" % (self.from_user, self.to_user, self.get_status_display())
 
-def get_or_none(cls, *args, **kwargs):
+class OAuthClient(models.Model):
+	client_id = models.CharField(max_length=64)
+	client_name = models.CharField(max_length=64)
+	client_secret = models.CharField(max_length=64)
+	image_url = models.URLField()
+	redirect_url = models.URLField()
+
+	def __str__(self):
+		return self.client_name
+
+	class Meta:
+		verbose_name_plural = "OAuth Clients"
+
+class OAuthCode(models.Model):
+	user = models.ForeignKey(User, related_name="+", on_delete=models.CASCADE)
+	auth_code = models.CharField(max_length=64)
+	client = models.ForeignKey(OAuthClient, related_name="+", on_delete=models.CASCADE)
+	generated_at = models.DateTimeField()
+
+	def __str__(self):
+		return f"Auth code for {self.user}"
+
+	class Meta:
+		verbose_name_plural = "OAuth Authorization Codes"
+
+class OAuthToken(models.Model):
+	access_token = models.CharField(max_length=64)
+	user = models.ForeignKey(User, related_name="+", on_delete=models.CASCADE)
+	client = models.ForeignKey(OAuthClient, related_name="+", on_delete=models.CASCADE)
+
+	def __str__(self):
+		return f"OAuth access token for {self.user}"
+
+	class Meta:
+		verbose_name_plural = "OAuth Tokens"
+
+def get_or_none(cls, is_relation=False, *args, **kwargs):
 	"""Get a model instance according to the filters, or return None if no matching model instance was found."""
 	try:
-		return cls.objects.get(*args, **kwargs)
+		if is_relation:
+			return cls.get(*args, **kwargs)
+		else:
+			return cls.objects.get(*args, **kwargs)
 	except ObjectDoesNotExist:
 		return None
+
+class IntegrationMessage(models.Model):
+	template = models.ForeignKey(MessageTemplate, related_name="+", on_delete=models.CASCADE)
+	networker = models.ForeignKey(User, related_name="+", on_delete=models.CASCADE, limit_choices_to={"profile__is_networker": True})
+	award = models.IntegerField()
+	client = models.ForeignKey(OAuthClient, related_name="+", on_delete=models.CASCADE)
+
+	def __str__(self):
+		return f"{self.client.client_name}: Message #{self.award}"
+
+class WebhookType(Enum):
+	MESSAGES = auto()
+	FRIENDSHIPS = auto()
+
+class Webhook(models.Model):
+	client = models.ForeignKey(OAuthClient, related_name="+", on_delete=models.CASCADE)
+	access_token = models.ForeignKey(OAuthToken, related_name="+", on_delete=models.CASCADE)
+	user = models.ForeignKey(User, related_name="+", on_delete=models.CASCADE)
+	secret = models.CharField(max_length=64)
+	url = models.URLField()
+	type = EnumField(WebhookType)
+
+	def __str__(self):
+		return f"{self.type.name.title()} webhook for {self.client.client_name}"

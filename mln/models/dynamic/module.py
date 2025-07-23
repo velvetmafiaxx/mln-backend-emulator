@@ -42,7 +42,7 @@ class Module(models.Model):
 
 	def save(self, *args, **kwargs):
 		"""Check if module isn't set up when it doesn't even need to be."""
-		if not self._needs_setup() and self.is_setup is False: 
+		if not self._needs_setup() and self.is_setup is False:
 			self.is_setup = None
 		super().save(*args, **kwargs)
 
@@ -77,29 +77,32 @@ class Module(models.Model):
 		else:  # lottery
 			random_number = random.randrange(100)
 			sum = 0
-			for prize in yields: 
+			for prize in yields:
 				sum += prize.probability
-				if sum > random_number: 
+				if sum > random_number:
 					return prize
-			else: 
+			else:
 				raise RuntimeError(f"Couldn't choose a yield for {self}. Possible yields: {yields}")
 
 	def _needs_setup(self):
 		return self.item.module_info.editor_type == ModuleEditorType.TRADE or self.item.setup_costs.exists()
 
-	def _update_clicks(self, clicker):
-		"""Updates clicks for both the clicker and the module."""
+	def _validate_click(self, clicker):
 		if clicker == self.owner:  # user can't click on own module
 			raise ValueError("Can't vote on own module")
 		elif clicker.profile.available_votes <= 0:  # user must have clicks
 			raise RuntimeError("Voter has no votes left")
 		elif not self.is_clickable():  # module must be set-up
 			raise RuntimeError("This module is not set up")
-		clicker.profile.available_votes -= 1
-		clicker.profile.save()
+
+	def _update_clicks(self, clicker):
+		"""Updates clicks for both the clicker and the module."""
 		self.clicks_since_last_harvest += 1
 		self.total_clicks += 1
 		self.save()
+		if clicker.profile.is_networker: return
+		clicker.profile.available_votes -= 1
+		clicker.profile.save()
 
 	def get_settings_classes(self):
 		"""Get the save data classes for this module."""
@@ -113,31 +116,41 @@ class Module(models.Model):
 		"""Calculate the yield of this module."""
 		return self._calc_yield_info()[0]
 
-	def click(self, clicker): 
+	def handle_trade(self, clicker):
+		trade = self.setup_trade
+		assert_has_item(clicker, trade.request_item.id, trade.request_qty)
+		remove_inv_item(clicker, trade.request_item.id, trade.request_qty)
+		add_inv_item(self.owner, trade.request_item.id, trade.request_qty)
+		add_inv_item(clicker, trade.give_item.id, trade.give_qty)
+		self.is_setup = False
+		self.save()
+
+	def handle_guest_yield(self, clicker):
+		guest_yield = self._get_yield(self.item.moduleguestyields.all())
+		if guest_yield is not None:
+			guest_yield.on_click(self, clicker)
+			if guest_yield.should_yield(self):
+				return guest_yield
+
+	def click(self, clicker):
 		"""Updates clicks and distributes relevant rewards."""
+		self._validate_click(clicker)
+
 		# Handle most click handlers
 		self.did_guest_win = random.choice([True, False])
-		for model in CLICK_HANDLERS: 
+		for model in CLICK_HANDLERS:
 			for handler in model.objects.filter(module_item_id=self.item_id):
 				handler.on_click(self, clicker)
 
 		# Handle trades separately
 		if ModuleSetupTrade in self.get_settings_classes():  # handle trades
-			trade = self.setup_trade
-			assert_has_item(clicker, trade.request_item.id, trade.request_qty)
-			remove_inv_item(clicker, trade.request_item.id, trade.request_qty)
-			add_inv_item(self.owner, trade.request_item.id, trade.request_qty)
-			add_inv_item(clicker, trade.give_item.id, trade.give_qty)
+			self.handle_trade(clicker)
 
 		# Handle guest yields separately
 		outcome = self.item.module_info.click_outcome
 		result = None  # we return the guest yield to the UI
-		if (outcome != ModuleOutcome.ARCADE): 
-			guest_yield = self._get_yield(self.item.moduleguestyields.all())
-			if guest_yield is not None:
-				guest_yield.on_click(self, clicker)
-				if guest_yield.should_yield(self): 
-					result = guest_yield
+		if (outcome != ModuleOutcome.ARCADE):
+			result = self.handle_guest_yield(clicker)
 
 		# Update information about the module
 		self._update_clicks(clicker)
@@ -145,9 +158,26 @@ class Module(models.Model):
 			# Tear down the module if the guest won
 			self.is_setup = False
 			self.save()
+
+		# For pseudo-networkers, have them click the user back
+		if self.owner.profile.is_networker and self.owner.profile.is_pseudo:
+			self.click_back(clicker)
+
 		return result
 
-	def add_to_harvest(self, qty): 
+	def click_back(self, clicker):
+		# A pseudo-networker is a special networker added to re-balance the game
+		# If you click a pseudo-networker's module, they will click yours back.
+		# If you have several, they will keep clicking until one succeeds.
+		if clicker.profile.is_networker: return  # only click back humans
+		for human_module in clicker.modules.filter(item=self.item):
+			try:
+				human_module.click(self.owner)
+				break
+			except:
+				continue
+
+	def add_to_harvest(self, qty):
 		self.yield_since_last_harvest += qty
 		self.save()
 
@@ -180,7 +210,7 @@ class Module(models.Model):
 			add_inv_item(self.setup_group_performance.friend_2, self.get_yield_item_id(), qty=harvest_qty)
 		self.save()
 
-	def is_clickable(self): 
+	def is_clickable(self):
 		"""Returns True if the owner set up this module, or it doesn't need setup."""
 		# self.is_setup = None means it doesn't need setup, so we explicitly check for False.
 		return self.owner.profile.is_networker or self.is_setup is not False

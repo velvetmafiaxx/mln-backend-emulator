@@ -1,7 +1,7 @@
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db.models import Q
 
-from ..models.static import ItemInfo
+from ..models.static import ItemInfo, ItemType
 
 def add_inv_item(user, item_id, qty=1):
 	"""
@@ -40,9 +40,9 @@ def remove_inv_item(user, item_id, qty=1):
 	else:
 		raise RuntimeError("%s has fewer items than the %i requested to delete" % (stack, qty))
 
-def refund_invalid_modules(user): 
+def refund_invalid_modules(user):
 	corrupt_modules = user.modules.filter(Q(pos_x__isnull=True) | Q(pos_y__isnull=True))
-	for module in corrupt_modules: 
+	for module in corrupt_modules:
 		add_inv_item(user, module.item_id)
 	corrupt_modules.delete()
 
@@ -62,3 +62,13 @@ def assert_has_item(user, item_id, qty=1, field_name=None):
 		if field_name is not None:
 			raise ValidationError({field_name: message})
 		raise ValidationError(message)
+
+def has_item(user, item_id):
+	try:
+		user.inventory.filter(item_id=item_id).get()
+		return True
+	except ObjectDoesNotExist:
+		return False
+
+def get_badges(user):
+	return user.inventory.filter(item__type=ItemType.BADGE)
